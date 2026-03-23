@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_DB: ${WRITE_DB_NAME:-write_db}
+      POSTGRES_USER: ${WRITE_DB_USER:-user}
+      POSTGRES_PASSWORD: ${WRITE_DB_PASSWORD:-password}
+    ports:
+      - '${WRITE_DB_PORT:-5432}:5432'
+    volumes:
+      - ./db/write-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${WRITE_DB_USER:-user} -d ${WRITE_DB_NAME:-write_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  read-db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_DB: ${READ_DB_NAME:-read_db}
+      POSTGRES_USER: ${READ_DB_USER:-user}
+      POSTGRES_PASSWORD: ${READ_DB_PASSWORD:-password}
+    ports:
+      - '${READ_DB_PORT:-5433}:5432'
+    volumes:
+      - ./db/read-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${READ_DB_USER:-user} -d ${READ_DB_NAME:-read_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  broker:
+    image: rabbitmq:3-management
+    ports:
+      - '${BROKER_PORT:-5672}:5672'
+      - '${BROKER_MANAGEMENT_PORT:-15672}:15672'
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  command-service:
+    build: ./command-service
+    ports:
+      - '${COMMAND_SERVICE_PORT:-8080}:8080'
+    depends_on:
+      db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      DATABASE_URL: ${DATABASE_URL:-postgresql://user:password@db:5432/write_db}
+      BROKER_URL: ${BROKER_URL:-amqp://guest:guest@broker:5672/}
+      BROKER_EXCHANGE: ${BROKER_EXCHANGE:-commerce.events}
+      OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-2000}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  consumer-service:
+    build: ./consumer-service
+    depends_on:
+      broker:
+        condition: service_healthy
+      read-db:
+        condition: service_healthy
+    environment:
+      BROKER_URL: ${BROKER_URL:-amqp://guest:guest@broker:5672/}
+      READ_DATABASE_URL: ${READ_DATABASE_URL:-postgresql://user:password@read-db:5432/read_db}
+      BROKER_EXCHANGE: ${BROKER_EXCHANGE:-commerce.events}
+      QUEUE_NAME: ${QUEUE_NAME:-analytics-projection-queue}
+      PREFETCH_COUNT: ${PREFETCH_COUNT:-20}
+    healthcheck:
+      test: ["CMD", "node", "src/healthcheck.js"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  query-service:
+    build: ./query-service
+    ports:
+      - '${QUERY_SERVICE_PORT:-8081}:8081'
+    depends_on:
+      read-db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+    environment:
+      PORT: 8081
+      READ_DATABASE_URL: ${READ_DATABASE_URL:-postgresql://user:password@read-db:5432/read_db}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8081/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
