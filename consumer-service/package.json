@@ -1,0 +1,14 @@
+{
+  "name": "consumer-service",
+  "version": "1.0.0",
+  "description": "CQRS projection consumer service",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "healthcheck": "node src/healthcheck.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.5",
+    "pg": "^8.14.1"
+  }
+}
