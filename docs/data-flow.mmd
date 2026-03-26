@@ -1,0 +1,9 @@
+flowchart LR
+  A[Client] --> B[Command Service]
+  B -->|Transactional write| C[(Write DB)]
+  B -->|Insert event in same tx| D[(Outbox Table)]
+  D -->|Polling publisher| E[RabbitMQ Exchange]
+  E --> F[Consumer Service]
+  F -->|Idempotent apply| G[(Read DB Projections)]
+  H[Query Service] --> G
+  A --> H
